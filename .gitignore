@@ -1,0 +1,8 @@
+*.o
+client
+server
+game_client
+game_server
+waitress
+echo_client
+echo_server
