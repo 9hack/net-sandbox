@@ -1,13 +1,13 @@
-#include <ctime>
+#include "threadsafe_queue.h"
+#include <boost/enable_shared_from_this.hpp>
+#include <boost/shared_ptr.hpp>
+#include <boost/bind.hpp>
+#include <boost/asio.hpp>
 #include <iostream>
 #include <string>
 #include <chrono>
 #include <thread>
-#include <boost/bind.hpp>
-#include <boost/shared_ptr.hpp>
-#include <boost/enable_shared_from_this.hpp>
-#include <boost/asio.hpp>
-#include "threadsafe_queue.h"
+#include <ctime>
 
 #define PORT 9000
 
@@ -26,13 +26,13 @@ public:
   }
 
   // Returns this connection's socket.
-  tcp::socket& socket() {
-    return socket_;
+  tcp::socket& get_socket() {
+    return socket;
   }
 
   // When connection starts, begin reading.
   void start() {
-    socket_.async_read_some(boost::asio::buffer(rcvbuf),
+    socket.async_read_some(boost::asio::buffer(rcvbuf),
         boost::bind(&TcpConnection::handle_read, shared_from_this(),
           boost::asio::placeholders::error,
           boost::asio::placeholders::bytes_transferred));
@@ -40,12 +40,12 @@ public:
   
   // Sends a message to this client. Returns true if write was successful.
   bool send(std::string message) {
-    if (!socket_.is_open()) {
+    if (!socket.is_open()) {
       return false;
     }
     
     boost::system::error_code error;
-    boost::asio::write(socket_, boost::asio::buffer(message), error);
+    boost::asio::write(socket, boost::asio::buffer(message), error);
     
     // If we get these errors, it's likely a clean disconnect.
     if ((error == boost::asio::error::eof) ||
@@ -61,14 +61,14 @@ public:
     return true;
   }
   
-  bool HasMessages() 
-  {
+  // Returns true if there are messages in the queue.
+  bool has_messages() {
     return !message_queue.empty();
   }
   
-  std::string PopMessage() 
-  { 
-    if (!HasMessages()) 
+  // Removes a message and returns it.
+  std::string pop_message() { 
+    if (!has_messages()) 
       throw std::logic_error("No messages"); 
     return message_queue.pop(); 
   }
@@ -76,7 +76,7 @@ public:
 private:
   // Initializes the socket.
   TcpConnection(boost::asio::io_service& io_service)
-    : socket_(io_service) {}
+    : socket(io_service) {}
   
   // Callback for when an asynchronous  read completes. 
   void handle_read(const boost::system::error_code& error, size_t bytes_transferred) {    
@@ -89,13 +89,13 @@ private:
     }
 
     // Wait for and read the next message.
-    socket_.async_read_some(boost::asio::buffer(rcvbuf),
+    socket.async_read_some(boost::asio::buffer(rcvbuf),
         boost::bind(&TcpConnection::handle_read, shared_from_this(),
           boost::asio::placeholders::error,
           boost::asio::placeholders::bytes_transferred));
   }
 
-  tcp::socket socket_;
+  tcp::socket socket;
   char rcvbuf[BUFSIZ];
   ThreadSafeQueue<std::string> message_queue;
 };
@@ -107,9 +107,7 @@ class TcpServer {
 public:
   // Initializes this server with the given port.
   TcpServer(unsigned int port) :
-    acceptor_(io_service, tcp::endpoint(tcp::v4(), port)),
-    next_id(0)
-  {
+    acceptor_(io_service, tcp::endpoint(tcp::v4(), port)), next_id(0) {
     start_accept();
     
     // Run the io_service in a separate thread so it's non-blocking.
@@ -117,8 +115,7 @@ public:
   }
   
   // Sends a message to all clients.
-  void SendToAll(std::string message) 
-  {
+  void send_to_all(std::string message) {
     // No clients connected.
     if (client_list.size() == 0) {
       return;
@@ -136,7 +133,7 @@ public:
   }
   
   // Read all messages from all clients.
-  std::vector<std::string> ReadAll() {
+  std::vector<std::string> read_all_messages() {
     std::vector<std::string> messages;
     
     // No clients connected.
@@ -145,8 +142,8 @@ public:
     }
     
     for (auto const &c : client_list) {
-      while (c.second->HasMessages()) {
-        auto message = c.second->PopMessage();
+      while (c.second->has_messages()) {
+        auto message = c.second->pop_message();
         messages.push_back(message);
       }
     }
@@ -160,7 +157,7 @@ private:
     TcpConnection::pointer new_connection =
       TcpConnection::create(acceptor_.get_io_service());
 
-    acceptor_.async_accept(new_connection->socket(),
+    acceptor_.async_accept(new_connection->get_socket(),
         boost::bind(&TcpServer::handle_accept, this, new_connection,
           boost::asio::placeholders::error));
   }
@@ -194,7 +191,7 @@ int main() {
     TcpServer server(PORT);
     std::cerr << "Running server on port " << PORT << std::endl;
     for (;;) {
-      auto messages = server.ReadAll();
+      auto messages = server.read_all_messages();
       
       if (messages.size() > 0) {
         std::cerr << "Read (" << messages.size() << ") messages:\n";
@@ -205,7 +202,7 @@ int main() {
       
       // TODO update stuff
       
-      server.SendToAll("Hello from server!\n");
+      server.send_to_all("Hello from server!\n");
       
       std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }

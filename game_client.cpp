@@ -3,102 +3,94 @@
  * License: MIT
  */
 
+#include "threadsafe_queue.h"
+#include <boost/thread.hpp>
 #include <boost/array.hpp>
 #include <boost/asio.hpp>
-#include <boost/thread.hpp>
-
-#include "threadsafe_queue.h"
-
 #include <memory>
+#include <thread>
 #include <array>
 
 #define PORT "9000"
 
 using boost::asio::ip::tcp;
 
-
-class NetworkClient 
-{
+/**
+ * Represents a single client on the network.
+ */
+class NetworkClient {
 public:
-    NetworkClient(std::string host) :
-      socket(io_service), 
-      service_thread(std::bind(&NetworkClient::run_service, this)) 
-    {
-      tcp::resolver resolver(io_service);
-      tcp::resolver::query query(tcp::v4(), host, PORT);      
-      tcp::resolver::iterator endpoint_iterator = resolver.resolve(query);
-      boost::asio::connect(socket, endpoint_iterator);      
-    }
-    
-    ~NetworkClient()
-    {
-        io_service.stop();
-        service_thread.join();
-    }
-    
-    void Send(std::string message)
-    {
-      boost::asio::write(socket, boost::asio::buffer(message));
-    }
+  NetworkClient(std::string host) :
+    socket(io_service), 
+    service_thread(std::bind(&NetworkClient::run_service, this)) {
+    tcp::resolver resolver(io_service);
+    tcp::resolver::query query(tcp::v4(), host, PORT);      
+    tcp::resolver::iterator endpoint_iterator = resolver.resolve(query);
+    boost::asio::connect(socket, endpoint_iterator);      
+  }
+  
+  // Destructor.
+  ~NetworkClient() {
+      io_service.stop();
+      service_thread.join();
+  }
+  
+  // Synchronously sends a message to the server. 
+  void send(std::string message) {
+    boost::asio::write(socket, boost::asio::buffer(message));
+  }
 
-    bool HasMessages() 
-    {
-      return !message_queue.empty();
-    }
-    
-    std::string PopMessage() 
-    { 
-      if (!HasMessages()) 
-        throw std::logic_error("No messages"); 
-      return message_queue.pop(); 
-    };
+  // Returns true if there are message(s) in the queue.
+  bool has_messages() {
+    return !message_queue.empty();
+  }
+  
+  // Removes and returns a message from the FIFO queue.
+  std::string pop_message() { 
+    if (!has_messages()) 
+      throw std::logic_error("No messages"); 
+    return message_queue.pop(); 
+  }
 
 private:
-    boost::asio::io_service io_service;
-    tcp::socket socket;
-    std::array<char, BUFSIZ> recv_buffer;
-    boost::thread service_thread;
-
-    // Thread safe message queue
-    ThreadSafeQueue<std::string> message_queue;
-
-    void start_receive() 
-    {      
-      socket.async_receive(boost::asio::buffer(recv_buffer),
-        boost::bind(&NetworkClient::handle_receive, this, 
-          boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred));
+  // Begin receiving messages by adding an async receive task.
+  void start_receive() {      
+    socket.async_receive(boost::asio::buffer(recv_buffer),
+      boost::bind(&NetworkClient::handle_receive, this, 
+        boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred));
+  }
+  
+  // Callback for when receive is completed. Adds to message queue, continue reading.
+  void handle_receive(const boost::system::error_code& error, std::size_t bytes_transferred) {
+    if (!error) {
+        std::string message(recv_buffer.data(), recv_buffer.data() + bytes_transferred);
+        message_queue.push(message);
     }
-    
-    void handle_receive(const boost::system::error_code& error, std::size_t bytes_transferred)
-    {
-      if (!error)
-      {
-          std::string message(recv_buffer.data(), recv_buffer.data() + bytes_transferred);
-          std::cerr << "received: " << message << std::endl;
-          message_queue.push(message);
-      }
 
-      start_receive();
+    start_receive();
+  }
+  
+  // Service thread for receiving messages.
+  void run_service() {
+    start_receive();
+    while (!io_service.stopped()) {
+        try {
+            io_service.run();
+        }
+        catch (const std::exception& e) {
+            std::cerr << "Client network exception" << e.what();
+        }
+        catch (...) {
+            std::cerr << "Unknown exception in client network";
+        }
     }
-    
-    void run_service()
-    {
-      std::cerr << "Client network thread started\n";
-      start_receive();
-      std::cerr << "Client started receiving\n";
-      while (!io_service.stopped()) {
-          try {
-              io_service.run();
-          }
-          catch (const std::exception& e) {
-              std::cerr << "Client network exception" << e.what();
-          }
-          catch (...) {
-              std::cerr << "Unknown exception in client network";
-          }
-      }
-      std::cerr << "Client network thread stopped";
-    }
+  }
+  
+  boost::asio::io_service io_service;
+  tcp::socket socket;
+  std::array<char, BUFSIZ> recv_buffer;
+  boost::thread service_thread;
+  ThreadSafeQueue<std::string> message_queue;
 };
 
 int main(int argc, char* argv[]) {
@@ -106,14 +98,18 @@ int main(int argc, char* argv[]) {
     std::cerr << "Usage: game_client <host> <msg>" << std::endl;
     return 1;
   }
+  
+  std::string server_hostname = argv[1];
+  std::string message = argv[2];
+  message += "\n";
 
-  NetworkClient client(argv[1]);
+  NetworkClient client(server_hostname);
   
   for (;;) {
     // Check for any messages from server.
-    if (client.HasMessages())
-      while (client.HasMessages()) {
-        std::cerr << "MSG: " << client.PopMessage() << "\n";
+    if (client.has_messages())
+      while (client.has_messages()) {
+        std::cerr << "↘ " << client.pop_message();
       }
     else
       std::cerr << "no messages\n";
@@ -121,10 +117,10 @@ int main(int argc, char* argv[]) {
     // TODO Client-side updates and rendering.
     
     // Send input updates to server.
-    std::cerr << "Sending...\n";
-    client.Send(argv[2]);
+    std::cerr << "↗ " << message;
+    client.send(message);
     
-    sleep(1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   
   return 0;
