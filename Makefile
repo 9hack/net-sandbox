@@ -1,4 +1,4 @@
-LIBS=-lpthread -lboost_system -lboost_thread-mt
+LIBS=-lpthread -lboost_system -lboost_thread
 FLAGS=-std=c++11
 
 all: client server
