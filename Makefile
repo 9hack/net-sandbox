@@ -1,13 +1,13 @@
-LDLIBS=-I /opt/local/include/ -L/opt/local/lib -lboost_system -Wl,-rpath,/opt/local/lib
-FLAGS=-lpthread -lboost_thread
+LIBS=-lpthread -lboost_system -lboost_thread-mt
+FLAGS=-std=c++11
 
 all: client server
 
 client: client.cpp
-	g++ -g -Wall $(LDLIBS) -o client client.cpp -lpthread -lboost_thread
+	g++ -g -Wall $(FLAGS) $(LIBS) -o client client.cpp 
 
 server: server.cpp
-	g++ -g -Wall $(LDLIBS) -o server server.cpp -lpthread
+	g++ -g -Wall $(FLAGS) $(LIBS) -o server server.cpp -lpthread
 
 clean:
 	rm -f client server *.o

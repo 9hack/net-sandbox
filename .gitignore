@@ -6,3 +6,6 @@ game_server
 waitress
 echo_client
 echo_server
+
+# mac stuff
+*.dSYM
