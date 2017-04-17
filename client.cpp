@@ -22,7 +22,7 @@ class NetworkClient {
 public:
   NetworkClient(std::string host) :
     socket(io_service), 
-    service_thread(std::bind(&NetworkClient::run_service, this)) {
+    service_thread(boost::bind(&NetworkClient::run_service, this)) {
     tcp::resolver resolver(io_service);
     tcp::resolver::query query(tcp::v4(), host, PORT);      
     tcp::resolver::iterator endpoint_iterator = resolver.resolve(query);
@@ -88,7 +88,7 @@ private:
   
   boost::asio::io_service io_service;
   tcp::socket socket;
-  std::array<char, BUFSIZ> recv_buffer;
+  boost::array<char, BUFSIZ> recv_buffer;
   boost::thread service_thread;
   ThreadSafeQueue<std::string> message_queue;
 };
